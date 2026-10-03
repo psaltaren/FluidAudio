@@ -456,7 +456,7 @@ struct ChunkProcessor {
         using manager: AsrManager,
         startTime: Date,
         progressHandler: ((Double) async -> Void)? = nil,
-        language: Language? = nil
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil
     ) async throws -> ASRResult {
         let requestedConcurrency = max(1, await manager.parallelChunkConcurrency)
         let workers = await makeWorkerPool(using: manager, count: requestedConcurrency) ?? [manager]
@@ -479,7 +479,7 @@ struct ChunkProcessor {
                 modelVersion: modelVersion,
                 startTime: startTime,
                 progressHandler: progressHandler,
-                language: language
+                language: language, phraseBoost: phraseBoost
             )
         }
 
@@ -591,7 +591,7 @@ struct ChunkProcessor {
                             using: worker,
                             decoderState: &decoderState,
                             maxModelSamples: maxModelSamples,
-                            language: language,
+                            language: language, phraseBoost: phraseBoost,
                             emitTokensAfterFrame: emitTokensAfterFrame,
                             initialTimeIndexOverride: emitTokensAfterFrame == nil ? nil : 0
                         )
@@ -707,7 +707,7 @@ struct ChunkProcessor {
                 speechRmsThreshold: speechRmsThreshold,
                 spliceSafeTokenIds: spliceSafeTokenIds,
                 vocabulary: vocabulary,
-                language: language
+                language: language, phraseBoost: phraseBoost
             )
         }
 
@@ -759,7 +759,7 @@ struct ChunkProcessor {
         using manager: AsrManager,
         decoderState: inout TdtDecoderState,
         maxModelSamples: Int,
-        language: Language? = nil,
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil,
         emitTokensAfterFrame: Int? = nil,
         initialTimeIndexOverride: Int? = nil
     ) async throws -> (tokens: [Int], timestamps: [Int], confidences: [Float], durations: [Int]) {
@@ -785,7 +785,7 @@ struct ChunkProcessor {
             contextFrameAdjustment: contextFrames,  // Skip context frames in decoder
             isLastChunk: isLastChunk,
             globalFrameOffset: globalFrameOffset,
-            language: language,
+            language: language, phraseBoost: phraseBoost,
             emitTokensAfterGlobalFrame: emitTokensAfterFrame,
             initialTimeIndexOverride: initialTimeIndexOverride
         )
@@ -1400,7 +1400,7 @@ struct ChunkProcessor {
         speechRmsThreshold: Float,
         spliceSafeTokenIds: Set<Int>?,
         vocabulary: [Int: String],
-        language: Language?
+        language: Language?, phraseBoost: PhraseBoost?
     ) async throws -> [TokenWindow] {
         let frameSamples = ASRConstants.samplesPerEncoderFrame
         let frameDuration = ASRConstants.secondsPerEncoderFrame
@@ -1467,7 +1467,7 @@ struct ChunkProcessor {
                             using: manager,
                             decoderState: &decoderState,
                             maxModelSamples: maxModelSamples,
-                            language: language
+                            language: language, phraseBoost: phraseBoost
                         )
 
                     guard windowTokens.count == windowTimestamps.count,

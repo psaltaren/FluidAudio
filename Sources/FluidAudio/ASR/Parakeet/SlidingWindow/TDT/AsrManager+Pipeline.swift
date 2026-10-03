@@ -94,7 +94,7 @@ extension AsrManager {
         contextFrameAdjustment: Int = 0,
         isLastChunk: Bool = false,
         globalFrameOffset: Int = 0,
-        language: Language? = nil,
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil,
         emitTokensAfterGlobalFrame: Int? = nil,
         initialTimeIndexOverride: Int? = nil
     ) async throws -> (hypothesis: TdtHypothesis, encoderSequenceLength: Int) {
@@ -112,7 +112,7 @@ extension AsrManager {
             paddedAudio, originalLength: originalLength, actualAudioFrames: actualAudioFrames,
             lengthPolicy: [], decoderState: &decoderState,
             contextFrameAdjustment: contextFrameAdjustment, isLastChunk: isLastChunk,
-            globalFrameOffset: globalFrameOffset, language: language,
+            globalFrameOffset: globalFrameOffset, language: language, phraseBoost: phraseBoost,
             emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
             initialTimeIndexOverride: initialTimeIndexOverride)
         guard Self.isWholeWindowBlank(result.hypothesis), let entryState else { return result }
@@ -123,7 +123,7 @@ extension AsrManager {
                 paddedAudio, originalLength: originalLength, actualAudioFrames: actualAudioFrames,
                 lengthPolicy: policy, decoderState: &retryState,
                 contextFrameAdjustment: contextFrameAdjustment, isLastChunk: isLastChunk,
-                globalFrameOffset: globalFrameOffset, language: language,
+                globalFrameOffset: globalFrameOffset, language: language, phraseBoost: phraseBoost,
                 emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
                 initialTimeIndexOverride: initialTimeIndexOverride)
             guard Self.recoveryIsCredible(retry.hypothesis) else { continue }
@@ -145,7 +145,7 @@ extension AsrManager {
         contextFrameAdjustment: Int,
         isLastChunk: Bool,
         globalFrameOffset: Int,
-        language: Language?,
+        language: Language?, phraseBoost: PhraseBoost?,
         emitTokensAfterGlobalFrame: Int?,
         initialTimeIndexOverride: Int?
     ) async throws -> (hypothesis: TdtHypothesis, encoderSequenceLength: Int) {
@@ -215,7 +215,7 @@ extension AsrManager {
                 contextFrameAdjustment: contextFrameAdjustment,
                 isLastChunk: isLastChunk,
                 globalFrameOffset: globalFrameOffset,
-                language: language,
+                language: language, phraseBoost: phraseBoost,
                 emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
                 initialTimeIndexOverride: initialTimeIndexOverride
             )

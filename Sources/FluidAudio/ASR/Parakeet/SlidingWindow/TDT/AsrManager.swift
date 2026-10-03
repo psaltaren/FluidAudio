@@ -237,7 +237,7 @@ public actor AsrManager {
         contextFrameAdjustment: Int = 0,
         isLastChunk: Bool = false,
         globalFrameOffset: Int = 0,
-        language: Language? = nil,
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil,
         emitTokensAfterGlobalFrame: Int? = nil,
         initialTimeIndexOverride: Int? = nil
     ) async throws -> TdtHypothesis {
@@ -326,7 +326,7 @@ public actor AsrManager {
                 contextFrameAdjustment: contextFrameAdjustment,
                 isLastChunk: isLastChunk,
                 globalFrameOffset: globalFrameOffset,
-                language: language,
+                language: language, phraseBoost: phraseBoost,
                 vocabulary: vocabulary,
                 punctuationTokenIds: punctuationTokenIds,
                 emitTokensAfterGlobalFrame: emitTokensAfterGlobalFrame,
@@ -371,15 +371,18 @@ public actor AsrManager {
     ///   - language: Optional language hint for script-aware token filtering (v3 only).
     ///     When set, top-K tokens that don't match the language's script are skipped
     ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
+    ///   - phraseBoost: Optional phrase boosting (v3-family joint with top-K outputs only).
+    ///     Biases greedy decoding toward the given phrases; nil leaves decoding unchanged.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails or models are not initialized
     public func transcribe(
         _ audioBuffer: AVAudioPCMBuffer,
         decoderState: inout TdtDecoderState,
-        language: Language? = nil
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil
     ) async throws -> ASRResult {
         let audioFloatArray = try audioConverter.resampleBuffer(audioBuffer)
-        return try await transcribe(audioFloatArray, decoderState: &decoderState, language: language)
+        return try await transcribe(
+            audioFloatArray, decoderState: &decoderState, language: language, phraseBoost: phraseBoost)
     }
 
     /// Transcribe audio from a file URL.
@@ -395,10 +398,12 @@ public actor AsrManager {
     ///   - language: Optional language hint for script-aware token filtering (v3 only).
     ///     When set, top-K tokens that don't match the language's script are skipped
     ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
+    ///   - phraseBoost: Optional phrase boosting (v3-family joint with top-K outputs only).
+    ///     Biases greedy decoding toward the given phrases; nil leaves decoding unchanged.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
     public func transcribe(
-        _ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil
+        _ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil, phraseBoost: PhraseBoost? = nil
     ) async throws -> ASRResult {
         // Check file size to decide streaming vs memory loading
         if config.streamingEnabled {
@@ -408,12 +413,14 @@ public actor AsrManager {
             let estimatedSamples = Int((Double(audioFile.length) * sampleRateRatio).rounded(.up))
 
             if estimatedSamples > config.streamingThreshold {
-                return try await transcribeDiskBacked(url, decoderState: &decoderState, language: language)
+                return try await transcribeDiskBacked(
+                    url, decoderState: &decoderState, language: language, phraseBoost: phraseBoost)
             }
         }
 
         let audioFloatArray = try audioConverter.resampleAudioFile(url)
-        let result = try await transcribe(audioFloatArray, decoderState: &decoderState, language: language)
+        let result = try await transcribe(
+            audioFloatArray, decoderState: &decoderState, language: language, phraseBoost: phraseBoost)
         return result
     }
 
@@ -428,10 +435,12 @@ public actor AsrManager {
     ///   - language: Optional language hint for script-aware token filtering (v3 only).
     ///     When set, top-K tokens that don't match the language's script are skipped
     ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
+    ///   - phraseBoost: Optional phrase boosting (v3-family joint with top-K outputs only).
+    ///     Biases greedy decoding toward the given phrases; nil leaves decoding unchanged.
     /// - Returns: An ASRResult containing the transcribed text and token timings
     /// - Throws: ASRError if transcription fails, models are not initialized, or the file cannot be read
     public func transcribeDiskBacked(
-        _ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil
+        _ url: URL, decoderState: inout TdtDecoderState, language: Language? = nil, phraseBoost: PhraseBoost? = nil
     ) async throws -> ASRResult {
         guard isAvailable else { throw ASRError.notInitialized }
 
@@ -465,7 +474,7 @@ public actor AsrManager {
                     guard let self else { return }
                     await self.progressEmitter.report(progress: progress)
                 },
-                language: language
+                language: language, phraseBoost: phraseBoost
             )
 
             sampleSource.cleanup()
@@ -494,6 +503,8 @@ public actor AsrManager {
     ///   - language: Optional language hint for script-aware token filtering (v3 only).
     ///     When set, top-K tokens that don't match the language's script are skipped
     ///     in favor of matching candidates. Silently ignored for v2 / tdtCtc110m / tdtJa.
+    ///   - phraseBoost: Optional phrase boosting (v3-family joint with top-K outputs only).
+    ///     Biases greedy decoding toward the given phrases; nil leaves decoding unchanged.
     /// - Note: Progress stream is emitted only when `audioSamples.count > ASRConstants.maxModelSamples` (~15s).
     ///         Use `transcriptionProgressStream` before calling this method to observe progress.
     /// - Returns: An ASRResult containing the transcribed text and token timings
@@ -501,14 +512,15 @@ public actor AsrManager {
     public func transcribe(
         _ audioSamples: [Float],
         decoderState: inout TdtDecoderState,
-        language: Language? = nil
+        language: Language? = nil, phraseBoost: PhraseBoost? = nil
     ) async throws -> ASRResult {
         let shouldEmitProgress = audioSamples.count > ASRConstants.maxModelSamples
         if shouldEmitProgress {
             _ = await progressEmitter.ensureSession()
         }
         do {
-            let result = try await transcribeWithState(audioSamples, decoderState: &decoderState, language: language)
+            let result = try await transcribeWithState(
+                audioSamples, decoderState: &decoderState, language: language, phraseBoost: phraseBoost)
 
             if shouldEmitProgress {
                 await progressEmitter.finishSession()

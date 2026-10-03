@@ -76,6 +76,8 @@ let package = Package(
                 // Real recordings (cleared for public release by the speaker) for the
                 // streaming final-window regression, issue #855.
                 .copy("ASR/Parakeet/SlidingWindow/Fixtures"),
+                // Python references for the phrase-boosting encoder and tree.
+                .copy("ASR/Parakeet/PhraseBoost/PhraseBoostFixtures"),
             ]
         ),
     ],

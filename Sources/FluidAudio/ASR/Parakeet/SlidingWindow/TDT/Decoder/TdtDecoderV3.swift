@@ -111,6 +111,7 @@ internal struct TdtDecoderV3: Sendable {
         isLastChunk: Bool = false,
         globalFrameOffset: Int = 0,
         language: Language? = nil,
+        phraseBoost: PhraseBoost? = nil,
         vocabulary: [Int: String]? = nil,
         punctuationTokenIds: Set<Int>? = nil,
         emitTokensAfterGlobalFrame: Int? = nil,
@@ -124,10 +125,10 @@ internal struct TdtDecoderV3: Sendable {
         // Use encoder hidden size from config (512 for 110m, 1024 for 0.6B)
         let expectedEncoderHidden = config.encoderHiddenSize
 
-        // Script-filtering consumes top-K; skip the extraction when the caller
-        // didn't provide a language (default path), so v3 joint runs don't pay
-        // for K-length array allocations they'll never use.
-        let needsTopK = language != nil
+        // Script-filtering and phrase boosting consume top-K; skip the extraction
+        // when the caller asked for neither (default path), so v3 joint runs don't
+        // pay for K-length array allocations they'll never use.
+        let needsTopK = language != nil || phraseBoost != nil
 
         // Build a stride-aware view so we can access encoder frames without extra copies
         let encoderFrames = try EncoderFrameView(
@@ -138,6 +139,8 @@ internal struct TdtDecoderV3: Sendable {
 
         var hypothesis = TdtHypothesis(decState: decoderState)
         hypothesis.lastToken = decoderState.lastToken
+        // Kept apart from `hypothesis.decState`, whose copies are made before a token is emitted.
+        var boostState = decoderState.phraseBoostState
 
         // Initialize time tracking for frame navigation
         // timeIndices: Current position in encoder frames (advances by duration)
@@ -298,6 +301,10 @@ internal struct TdtDecoderV3: Sendable {
                     label: &label, score: &score,
                     topKIds: ids, topKLogits: logits, vocabulary: vocab, blankId: blankId)
             }
+            Self.applyPhraseBoost(
+                phraseBoost, label: &label, score: &score,
+                topKIds: decision.topKIds, topKLogits: decision.topKLogits,
+                state: boostState, blankId: blankId)
 
             // Map duration bin to actual frame count
             // durationBins typically = [0,1,2,3,4] meaning skip 0-4 frames
@@ -386,6 +393,10 @@ internal struct TdtDecoderV3: Sendable {
                         label: &label, score: &score,
                         topKIds: ids, topKLogits: logits, vocabulary: vocab, blankId: blankId)
                 }
+                Self.applyPhraseBoost(
+                    phraseBoost, label: &label, score: &score,
+                    topKIds: innerDecision.topKIds, topKLogits: innerDecision.topKLogits,
+                    state: boostState, blankId: blankId)
 
                 duration = try TdtDurationMapping.mapDurationBin(
                     innerDecision.durationBin, durationBins: config.tdtConfig.durationBins)
@@ -430,6 +441,10 @@ internal struct TdtDecoderV3: Sendable {
                     hypothesis.suppressedTimestamps.append(emissionTimestamp)
                 }
                 hypothesis.lastToken = label  // Remember for next iteration
+                if let phraseBoost {
+                    // Advanced for suppressed tokens too, like the decoder LSTM below.
+                    boostState = phraseBoost.tree.step(from: boostState, token: label).next
+                }
 
                 // CRITICAL: Update decoder LSTM with the new token
                 // This updates the language model context for better predictions
@@ -589,6 +604,7 @@ internal struct TdtDecoderV3: Sendable {
             decoderState = finalState
         }
         decoderState.lastToken = hypothesis.lastToken
+        decoderState.phraseBoostState = boostState
 
         // Clear cached predictor output if ending with punctuation
         // This prevents punctuation from being duplicated at chunk boundaries.
@@ -672,6 +688,33 @@ internal struct TdtDecoderV3: Sendable {
         var sumExp: Float = 0
         for l in topKLogits { sumExp += expf(l - maxLogit) }
         score = sumExp > 0 ? expf(bestLogit - maxLogit) / sumExp : 0
+    }
+
+    /// Phrase boosting: when the (filtered) prediction is non-blank, replace it with
+    /// `argmax(logit + alpha * bonus)` over the non-blank top-K candidates. Blank
+    /// decisions are left alone, so boosting never inserts tokens into silence.
+    /// The score becomes the chosen token's top-K softmax, as in the script filter.
+    static func applyPhraseBoost(
+        _ boost: PhraseBoost?,
+        label: inout Int,
+        score: inout Float,
+        topKIds: [Int]?,
+        topKLogits: [Float]?,
+        state: Int,
+        blankId: Int
+    ) {
+        guard let boost, let topKIds, let topKLogits,
+            let choice = boost.choose(
+                label: label, topKIds: topKIds, topKLogits: topKLogits, state: state, blankId: blankId),
+            choice.token != label
+        else { return }
+
+        label = choice.token
+        var maxLogit: Float = -.infinity
+        for l in topKLogits where l > maxLogit { maxLogit = l }
+        var sumExp: Float = 0
+        for l in topKLogits { sumExp += expf(l - maxLogit) }
+        score = sumExp > 0 ? expf(choice.logit - maxLogit) / sumExp : 0
     }
 
     /// Replace `label`/`score` with the best right-language top-K candidate

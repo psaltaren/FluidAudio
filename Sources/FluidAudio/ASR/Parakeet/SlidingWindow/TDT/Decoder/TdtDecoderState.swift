@@ -24,6 +24,10 @@ public struct TdtDecoderState: Sendable {
     /// - zero: Decoder exactly at the end of encoder frames
     var timeJump: Int?
 
+    /// Phrase-boosting tree state (`PhraseBoostTree` node) after the last emitted token, so a
+    /// boosted phrase can continue across chunk boundaries. 0 (root) when boosting is off.
+    var phraseBoostState: Int = PhraseBoostTree.rootState
+
     /// Initialize decoder state with specified number of LSTM layers.
     /// - Parameter decoderLayers: Number of decoder LSTM layers (default: 2)
     ///   - v2 and v3 models: 2 layers (default)
@@ -67,6 +71,7 @@ public struct TdtDecoderState: Sendable {
         cellState = try MLMultiArray(shape: other.cellState.shape, dataType: .float32)
         lastToken = other.lastToken
         timeJump = other.timeJump
+        phraseBoostState = other.phraseBoostState
 
         hiddenState.copyData(from: other.hiddenState)
         cellState.copyData(from: other.cellState)
@@ -79,6 +84,7 @@ public struct TdtDecoderState: Sendable {
         lastToken = nil
         predictorOutput = nil
         timeJump = nil
+        phraseBoostState = PhraseBoostTree.rootState
     }
 
     /// Finalize the decoder state for the last chunk
