@@ -718,8 +718,8 @@ internal struct TdtDecoderV3: Sendable {
         topKLogits: [Float]?,
         state: Int,
         blankId: Int,
-        language: Language? = nil,
-        vocabulary: [Int: String]? = nil
+        language: Language?,
+        vocabulary: [Int: String]?
     ) {
         guard let boost, let topKIds, let topKLogits else { return }
         let current = label

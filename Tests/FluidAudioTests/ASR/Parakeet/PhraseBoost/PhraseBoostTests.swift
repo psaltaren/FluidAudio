@@ -143,7 +143,7 @@ final class PhraseBoostTests: XCTestCase {
         var score: Float = 0.9
         TdtDecoderV3.applyPhraseBoost(
             boost, label: &label, score: &score, topKIds: [blank, ids[1]], topKLogits: [10, 9.9],
-            state: state, blankId: blank)
+            state: state, blankId: blank, language: nil, vocabulary: nil)
         XCTAssertEqual(label, blank)
         XCTAssertEqual(score, 0.9)
 
@@ -151,13 +151,13 @@ final class PhraseBoostTests: XCTestCase {
         label = saId
         TdtDecoderV3.applyPhraseBoost(
             nil, label: &label, score: &score, topKIds: [saId, ids[1]], topKLogits: [10, 8],
-            state: state, blankId: blank)
+            state: state, blankId: blank, language: nil, vocabulary: nil)
         XCTAssertEqual(label, saId)
 
         // After ▁S, æ gains 2.69 and ä (no phrase) loses the accrued 1: a lead of 2 flips.
         TdtDecoderV3.applyPhraseBoost(
             boost, label: &label, score: &score, topKIds: [saId, ids[1], blank], topKLogits: [10, 8, 7],
-            state: state, blankId: blank)
+            state: state, blankId: blank, language: nil, vocabulary: nil)
         XCTAssertEqual(label, ids[1])
         XCTAssertLessThan(score, 0.5)
 
@@ -165,14 +165,14 @@ final class PhraseBoostTests: XCTestCase {
         label = saId
         TdtDecoderV3.applyPhraseBoost(
             boost, label: &label, score: &score, topKIds: [saId, ids[1]], topKLogits: [10, 6],
-            state: state, blankId: blank)
+            state: state, blankId: blank, language: nil, vocabulary: nil)
         XCTAssertEqual(label, saId)
 
         // A lead of 2 at alpha 0.5 does not either (9.5 against 9.35).
         let weak = PhraseBoost(tree: boost.tree, alpha: 0.5)
         TdtDecoderV3.applyPhraseBoost(
             weak, label: &label, score: &score, topKIds: [saId, ids[1]], topKLogits: [10, 8],
-            state: state, blankId: blank)
+            state: state, blankId: blank, language: nil, vocabulary: nil)
         XCTAssertEqual(label, saId)
     }
 
