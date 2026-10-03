@@ -176,6 +176,57 @@ final class PhraseBoostTests: XCTestCase {
         XCTAssertEqual(label, saId)
     }
 
+    func testBoostNeverBringsBackATokenTheScriptFilterRemoved() throws {
+        let encoder = try Self.encoder()
+        let boost = PhraseBoost(phrases: ["Sæga"], encoder: encoder, alpha: 1.0)
+        let blank = 8192
+        let cyrillic = 9001
+        let latin = 9002
+        let vocabulary = [cyrillic: "\u{2581}при", latin: "\u{2581}pri"]
+
+        // The joint's top-1 is Cyrillic; the Polish script filter has already picked the Latin
+        // runner-up. With no phrase in play, boosting must keep the filter's choice.
+        var label = latin
+        var score: Float = 0.3
+        TdtDecoderV3.applyPhraseBoost(
+            boost, label: &label, score: &score, topKIds: [cyrillic, latin, blank], topKLogits: [10, 8, 7],
+            state: PhraseBoostTree.rootState, blankId: blank, language: .polish, vocabulary: vocabulary)
+        XCTAssertEqual(label, latin)
+        XCTAssertEqual(score, 0.3)
+
+        // A boosted phrase token that passes the filter still wins over the filtered label.
+        let sId = encoder.encode("Sæga")[0]
+        var withPhrase = vocabulary
+        withPhrase[sId] = "\u{2581}S"
+        label = latin
+        TdtDecoderV3.applyPhraseBoost(
+            boost, label: &label, score: &score, topKIds: [cyrillic, latin, sId], topKLogits: [10, 8, 7.5],
+            state: PhraseBoostTree.rootState, blankId: blank, language: .polish, vocabulary: withPhrase)
+        XCTAssertEqual(label, sId)
+    }
+
+    func testBoostNeverBringsBackAFrenchBlocklistedToken() throws {
+        let encoder = try Self.encoder()
+        let boost = PhraseBoost(phrases: ["Sæga"], encoder: encoder, alpha: 1.0)
+        let blank = 8192
+        let the = 506  // ' the', in TdtDecoderV3.englishBlocklistIds
+        let le = 9003
+        let vocabulary = [the: "\u{2581}the", le: "\u{2581}le"]
+
+        var label = le
+        var score: Float = 0.2
+        TdtDecoderV3.applyPhraseBoost(
+            boost, label: &label, score: &score, topKIds: [the, le], topKLogits: [10, 8],
+            state: PhraseBoostTree.rootState, blankId: blank, language: .french, vocabulary: vocabulary)
+        XCTAssertEqual(label, le)
+
+        // Outside French the same id is ordinary vocabulary and stays eligible.
+        TdtDecoderV3.applyPhraseBoost(
+            boost, label: &label, score: &score, topKIds: [the, le], topKLogits: [10, 8],
+            state: PhraseBoostTree.rootState, blankId: blank, language: .english, vocabulary: vocabulary)
+        XCTAssertEqual(label, the)
+    }
+
     func testDecoderStateCarriesAndResetsTreeState() throws {
         var state = try TdtDecoderState()
         XCTAssertEqual(state.phraseBoostState, PhraseBoostTree.rootState)

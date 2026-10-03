@@ -304,7 +304,8 @@ internal struct TdtDecoderV3: Sendable {
             Self.applyPhraseBoost(
                 phraseBoost, label: &label, score: &score,
                 topKIds: decision.topKIds, topKLogits: decision.topKLogits,
-                state: boostState, blankId: blankId)
+                state: boostState, blankId: blankId,
+                language: language, vocabulary: vocabulary)
 
             // Map duration bin to actual frame count
             // durationBins typically = [0,1,2,3,4] meaning skip 0-4 frames
@@ -396,7 +397,8 @@ internal struct TdtDecoderV3: Sendable {
                 Self.applyPhraseBoost(
                     phraseBoost, label: &label, score: &score,
                     topKIds: innerDecision.topKIds, topKLogits: innerDecision.topKLogits,
-                    state: boostState, blankId: blankId)
+                    state: boostState, blankId: blankId,
+                    language: language, vocabulary: vocabulary)
 
                 duration = try TdtDurationMapping.mapDurationBin(
                     innerDecision.durationBin, durationBins: config.tdtConfig.durationBins)
@@ -546,8 +548,15 @@ internal struct TdtDecoderV3: Sendable {
                     needsTopK: needsTopK
                 )
 
-                let token = decision.token
-                let score = TdtDurationMapping.clampProbability(decision.probability)
+                var token = decision.token
+                var score = TdtDurationMapping.clampProbability(decision.probability)
+                // The script filter has never run in this flush loop; boosting does, so a phrase
+                // that ends the audio is boosted to its last token.
+                Self.applyPhraseBoost(
+                    phraseBoost, label: &token, score: &score,
+                    topKIds: decision.topKIds, topKLogits: decision.topKLogits,
+                    state: boostState, blankId: config.tdtConfig.blankId,
+                    language: language, vocabulary: vocabulary)
 
                 // Also get duration for proper timestamp calculation
                 let duration = try TdtDurationMapping.mapDurationBin(
@@ -576,6 +585,9 @@ internal struct TdtDecoderV3: Sendable {
                         hypothesis.suppressedTimestamps.append(finalTimestamp)
                     }
                     hypothesis.lastToken = token
+                    if let phraseBoost {
+                        boostState = phraseBoost.tree.step(from: boostState, token: token).next
+                    }
 
                     // Update decoder state
                     let step = try modelInference.runDecoder(
@@ -694,6 +706,10 @@ internal struct TdtDecoderV3: Sendable {
     /// `argmax(logit + alpha * bonus)` over the non-blank top-K candidates. Blank
     /// decisions are left alone, so boosting never inserts tokens into silence.
     /// The score becomes the chosen token's top-K softmax, as in the script filter.
+    ///
+    /// Runs after `tokenLanguageFilter` and `applyEnglishBlocklist`, and only picks among
+    /// candidates those filters would accept (plus the filtered `label` itself), so a boost
+    /// can never bring back the wrong-script or blocklisted token they just replaced.
     static func applyPhraseBoost(
         _ boost: PhraseBoost?,
         label: inout Int,
@@ -701,11 +717,28 @@ internal struct TdtDecoderV3: Sendable {
         topKIds: [Int]?,
         topKLogits: [Float]?,
         state: Int,
-        blankId: Int
+        blankId: Int,
+        language: Language? = nil,
+        vocabulary: [Int: String]? = nil
     ) {
-        guard let boost, let topKIds, let topKLogits,
+        guard let boost, let topKIds, let topKLogits else { return }
+        let current = label
+        let script = vocabulary == nil ? nil : language?.script
+        let blocklist = vocabulary != nil && englishBlocklistApplies(to: language)
+        let isAllowed: (Int) -> Bool = { id in
+            if id == current { return true }
+            if blocklist && englishBlocklistIds.contains(id) { return false }
+            if let script, let vocabulary {
+                guard let text = vocabulary[id], TokenLanguageFilter.matches(text, script: script) else {
+                    return false
+                }
+            }
+            return true
+        }
+        guard
             let choice = boost.choose(
-                label: label, topKIds: topKIds, topKLogits: topKLogits, state: state, blankId: blankId),
+                label: label, topKIds: topKIds, topKLogits: topKLogits, state: state, blankId: blankId,
+                isAllowed: isAllowed),
             choice.token != label
         else { return }
 

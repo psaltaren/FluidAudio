@@ -162,21 +162,22 @@ public struct PhraseBoost: Sendable {
             alpha: alpha)
     }
 
-    /// The boosted choice among the top-K candidates, or nil when boosting does not apply (blank
-    /// argmax, no candidates). Ties go to the earlier candidate.
+    /// The boosted choice among the top-K candidates that `isAllowed` accepts, or nil when boosting
+    /// does not apply (blank argmax, no candidates). Ties go to the earlier candidate.
     func choose(
         label: Int,
         topKIds: [Int],
         topKLogits: [Float],
         state: Int,
-        blankId: Int
+        blankId: Int,
+        isAllowed: (Int) -> Bool = { _ in true }
     ) -> (token: Int, logit: Float)? {
         guard label != blankId else { return nil }
         var best = -1
         var bestScore = -Float.infinity
         for i in 0..<min(topKIds.count, topKLogits.count) {
             let id = topKIds[i]
-            guard id != blankId else { continue }
+            guard id != blankId, isAllowed(id) else { continue }
             let score = topKLogits[i] + alpha * tree.step(from: state, token: id).bonus
             if best < 0 || score > bestScore {
                 best = i
