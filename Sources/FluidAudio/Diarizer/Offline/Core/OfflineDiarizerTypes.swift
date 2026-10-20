@@ -567,7 +567,7 @@ struct SegmentationLogits: Sendable {
 public struct SegmentationOutput: Sendable {
     public let logProbs: [[[Float]]]
     /// Soft speaker activity weights per chunk/frame/speaker (0.0...1.0 values).
-    public let speakerWeights: [[[Float]]]
+    public let speakerWeights: ChunkSpeakerWeights
     public let numChunks: Int
     public let numFrames: Int
     public let numSpeakers: Int
@@ -576,7 +576,7 @@ public struct SegmentationOutput: Sendable {
 
     public init(
         logProbs: [[[Float]]],
-        speakerWeights: [[[Float]]] = [],
+        speakerWeights: ChunkSpeakerWeights = [],
         numChunks: Int,
         numFrames: Int,
         numSpeakers: Int,
@@ -595,6 +595,48 @@ public struct SegmentationOutput: Sendable {
 
 /// Incremental segmentation chunk emitted while the model processes audio.
 @available(macOS 13.0, iOS 16.0, *)
+/// Speaker weights for every chunk, kept as one flat array per chunk and read back a chunk at a
+/// time as `[frame][speaker]`. Nested per-frame arrays cost one allocation per frame, which made
+/// memory grow with the audio's length (about 70 MB per hour of audio).
+public struct ChunkSpeakerWeights: RandomAccessCollection, ExpressibleByArrayLiteral, Sendable {
+    private var flat: [[Float]] = []
+    private var speakers: [Int] = []
+    private var frames: [Int] = []
+
+    public init() {}
+
+    public init(_ chunks: [[[Float]]]) {
+        for chunk in chunks { append(chunk) }
+    }
+
+    public init(arrayLiteral chunks: [[Float]]...) {
+        self.init(chunks)
+    }
+
+    public mutating func append(_ chunk: [[Float]]) {
+        let count = chunk.first?.count ?? 0
+        var values = [Float]()
+        values.reserveCapacity(chunk.count * count)
+        for frame in chunk {
+            precondition(frame.count == count, "every frame in a chunk needs the same speaker count")
+            values.append(contentsOf: frame)
+        }
+        flat.append(values)
+        speakers.append(count)
+        frames.append(chunk.count)
+    }
+
+    public var startIndex: Int { 0 }
+    public var endIndex: Int { flat.count }
+
+    public subscript(chunk: Int) -> [[Float]] {
+        let count = speakers[chunk]
+        guard count > 0 else { return Array(repeating: [], count: frames[chunk]) }
+        let values = flat[chunk]
+        return stride(from: 0, to: values.count, by: count).map { Array(values[$0..<($0 + count)]) }
+    }
+}
+
 public struct SegmentationChunk: Sendable {
     public let chunkIndex: Int
     public let chunkOffsetSeconds: Double

@@ -55,8 +55,10 @@ struct OfflineSegmentationProcessor {
         let chunkSize = config.samplesPerWindow
         let stepSize = config.samplesPerStep
 
-        var logProbChunks: [[[Float]]] = []
-        var weightChunks: [[[Float]]] = []
+        // Per-chunk log probabilities go to the chunk callback only: nothing downstream reads them
+        // from the output, and keeping every chunk's nested arrays grew memory with the audio's
+        // length (about 150 MB per hour of audio).
+        var weightChunks = ChunkSpeakerWeights()
         var chunkOffsets: [Double] = []
         var frameDuration: Double = 0
         var numFrames = 0
@@ -415,7 +417,6 @@ struct OfflineSegmentationProcessor {
                     chunkWeights[frameIndex] = chunkSpeakerProbs[frameIndex]
                 }
 
-                logProbChunks.append(chunkLogProbs)
                 weightChunks.append(chunkWeights)
 
                 if chunkEmissionEnabled, let chunkCallback {
@@ -465,7 +466,7 @@ struct OfflineSegmentationProcessor {
         }
 
         let totalFramesWithSpeech = speechFrameCount
-        let totalFramesOverall = numFrames * logProbChunks.count
+        let totalFramesOverall = numFrames * weightChunks.count
         if totalFramesOverall > 0 {
             let ratio = Double(totalFramesWithSpeech) / Double(totalFramesOverall)
             let ratioString = String(format: "%.3f", ratio)
@@ -525,9 +526,9 @@ struct OfflineSegmentationProcessor {
         }
 
         return SegmentationOutput(
-            logProbs: logProbChunks,
+            logProbs: [],
             speakerWeights: weightChunks,
-            numChunks: logProbChunks.count,
+            numChunks: weightChunks.count,
             numFrames: numFrames,
             numSpeakers: speakerCount,
             chunkOffsets: chunkOffsets,
